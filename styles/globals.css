@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f9fafb;
+}
+
+html, body {
+  height: 100%;
+}
+
+button {
+  @apply rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700;
+}
+
+input, select, textarea {
+  @apply w-full rounded border p-2;
+}
