@@ -1,26 +1,37 @@
 "use client";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { z } from "zod";
+import { validateFile } from "@/lib/security";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Label from "@/components/ui/Label";
-import { useToast } from "@/components/ui/ToastProvider";
+import FileUpload from "@/components/ui/FileUpload";
+import Card from "@/components/ui/Card";
+import { ArrowLeft, User, Phone, Mail, FileText, CheckCircle } from "lucide-react";
+import toast from "react-hot-toast";
+
+const applicationSchema = z.object({
+  fullName: z.string().min(2, "Full name must be at least 2 characters"),
+  phone: z.string().min(10, "Please enter a valid phone number"),
+  email: z.string().email("Please enter a valid email address"),
+});
+
+type ApplicationForm = z.infer<typeof applicationSchema>;
 
 export default function ApplyPage() {
   const { type } = useParams<{ type: string }>();
   const router = useRouter();
-  const { show } = useToast();
-
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+  
+  const [formData, setFormData] = useState<ApplicationForm>({
+    fullName: "",
+    phone: "",
+    email: "",
+  });
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [checking, setChecking] = useState(true);
+  const [errors, setErrors] = useState<Partial<ApplicationForm>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -38,137 +49,276 @@ export default function ApplyPage() {
     return () => { mounted = false; };
   }, [router]);
 
-  const schema = useMemo(
-    () =>
-      z.object({
-        fullName: z.string().min(2, "Enter your full name"),
-        phone: z
-          .string()
-          .min(7, "Enter a valid phone")
-          .regex(/^[0-9+\-()\s]+$/, "Phone can only contain digits and symbols"),
-        email: z.string().email("Enter a valid email"),
-      }),
-    []
-  );
+  const permitTypes = {
+    business: {
+      title: "Business Permit",
+      description: "Apply for new or renewal of business permits",
+      icon: "🏢",
+      requirements: [
+        "Business registration documents",
+        "Valid government ID",
+        "Business location details",
+        "Tax clearance certificate",
+      ],
+    },
+    building: {
+      title: "Building Permit",
+      description: "Apply for construction and renovation permits",
+      icon: "🏗️",
+      requirements: [
+        "Building plans and specifications",
+        "Land ownership documents",
+        "Structural calculations",
+        "Site development plan",
+      ],
+    },
+    barangay: {
+      title: "Barangay Clearance",
+      description: "Request barangay clearance certificates",
+      icon: "🏛️",
+      requirements: [
+        "Valid government ID",
+        "Residency certificate",
+        "Purpose of clearance",
+        "Community tax certificate",
+      ],
+    },
+  };
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setFieldErrors({});
+  const currentPermit = permitTypes[type as keyof typeof permitTypes];
+
+  const handleInputChange = (field: keyof ApplicationForm, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+    // Clear error when user starts typing
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: undefined }));
+    }
+  };
+
+  const validateForm = (): boolean => {
     try {
-      const parsed = schema.safeParse({ fullName, phone, email });
-      if (!parsed.success) {
-        const errs: Record<string, string> = {};
-        for (const issue of parsed.error.issues) {
-          if (issue.path[0]) errs[String(issue.path[0])] = issue.message;
-        }
-        setFieldErrors(errs);
-        throw new Error("Please fix the highlighted fields.");
+      applicationSchema.parse(formData);
+      setErrors({});
+      return true;
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const newErrors: Partial<ApplicationForm> = {};
+        error.errors.forEach((err) => {
+          if (err.path[0]) {
+            newErrors[err.path[0] as keyof ApplicationForm] = err.message;
+          }
+        });
+        setErrors(newErrors);
       }
-      // 1) create applicant (upsert by email)
-      const { data: applicant, error: aerr } = await supabase
+      return false;
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      toast.error("Please fix the errors in the form");
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      // 1) Create or update applicant
+      const { data: applicant, error: applicantError } = await supabase
         .from("applicants")
-        .upsert({ full_name: fullName, phone, email }, { onConflict: "email" })
+        .upsert(
+          { 
+            full_name: formData.fullName, 
+            phone: formData.phone, 
+            email: formData.email 
+          }, 
+          { onConflict: "email" }
+        )
         .select()
         .single();
-      if (aerr) throw aerr;
 
-      // 2) create application
-      const { data: app, error: apperr } = await supabase
+      if (applicantError) throw applicantError;
+
+      // 2) Create application
+      const { data: application, error: applicationError } = await supabase
         .from("applications")
-        .insert({ applicant_id: applicant.id, type, status: "submitted", fee_amount: 0 })
+        .insert({ 
+          applicant_id: applicant.id, 
+          type, 
+          status: "submitted", 
+          fee_amount: 0 
+        })
         .select()
         .single();
-      if (apperr) throw apperr;
 
-      // 3) upload optional documents
+      if (applicationError) throw applicationError;
+
+      // 3) Upload documents if any
       if (files.length > 0) {
-        for (const f of files) {
-          const path = `${app.id}/${Date.now()}-${f.name}`;
-          const { error: uerr } = await supabase.storage
+        const uploadPromises = files.map(async (file) => {
+          const path = `${application.id}/${Date.now()}-${file.name}`;
+          
+          const { error: uploadError } = await supabase.storage
             .from("documents")
-            .upload(path, f, { cacheControl: "3600", upsert: false });
-          if (uerr) throw uerr;
-          const { error: derr } = await supabase
+            .upload(path, file, { cacheControl: "3600", upsert: false });
+          
+          if (uploadError) throw uploadError;
+
+          const { error: docError } = await supabase
             .from("documents")
-            .insert({ application_id: app.id, kind: "attachment", file_path: path, uploaded_by: "citizen" });
-          if (derr) throw derr;
-        }
+            .insert({ 
+              application_id: application.id, 
+              kind: "attachment", 
+              file_path: path, 
+              uploaded_by: "citizen" 
+            });
+
+          if (docError) throw docError;
+        });
+
+        await Promise.all(uploadPromises);
       }
 
-      show({ type: "success", title: "Submitted", message: "Application submitted successfully." });
+      toast.success("Application submitted successfully!");
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
-      show({ type: "error", title: "Error", message: err.message || "Something went wrong" });
+      
+    } catch (error: any) {
+      console.error("Application submission error:", error);
+      toast.error(error.message || "Failed to submit application");
     } finally {
       setLoading(false);
     }
+  };
+
+  if (checking) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
-  if (checking) return <div className="text-sm text-gray-600">Loading…</div>;
+  if (!currentPermit) {
+    return (
+      <div className="text-center py-12">
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Invalid Permit Type</h1>
+        <p className="text-gray-600 mb-6">The permit type you're looking for doesn't exist.</p>
+        <Button onClick={() => router.push("/")}>Go Back Home</Button>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold capitalize">Apply: {String(type)}</h1>
-        <p className="text-sm text-gray-600">Fill in your details and optionally attach a supporting photo.</p>
+    <div className="max-w-4xl mx-auto space-y-8">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button 
+          variant="ghost" 
+          onClick={() => router.back()}
+          leftIcon={<ArrowLeft className="h-4 w-4" />}
+        >
+          Back
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {currentPermit.icon} {currentPermit.title}
+          </h1>
+          <p className="text-gray-600 mt-1">{currentPermit.description}</p>
+        </div>
       </div>
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <div>
-          <Label htmlFor="fullName">Full name</Label>
-          <Input id="fullName" value={fullName} onChange={e => setFullName(e.target.value)} error={fieldErrors.fullName} />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="phone">Phone</Label>
-            <Input id="phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="09xxxxxxxxx" error={fieldErrors.phone} />
-          </div>
-          <div>
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" error={fieldErrors.email} />
-          </div>
-        </div>
-        <div>
-          <Label htmlFor="files">Upload documents (photos)</Label>
-          <input
-            id="files"
-            className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-gray-200 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-900 hover:file:bg-gray-300"
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={e => {
-              const list = Array.from(e.target.files || []);
-              // Simple validations: max 5 files, each <= 5MB
-              const valid = list.filter(f => f.size <= 5 * 1024 * 1024 && f.type.startsWith("image/"));
-              if (list.length > 5) {
-                show({ type: "error", message: "You can upload up to 5 images." });
-              }
-              const dropped = list.filter(f => !valid.includes(f));
-              if (dropped.length > 0) {
-                show({ type: "error", message: "Some files were skipped (not an image or > 5MB)." });
-              }
-              setFiles(valid.slice(0, 5));
-            }}
-          />
-          {files.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-3">
-              {files.map((f, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <img src={URL.createObjectURL(f)} className="h-16 w-16 rounded object-cover" alt={`file-${i}`} />
-                  <span className="text-xs text-gray-600 max-w-[160px] truncate">{f.name}</span>
-                </div>
+
+      <div className="grid gap-8 lg:grid-cols-3">
+        {/* Requirements */}
+        <div className="lg:col-span-1">
+          <Card className="p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Requirements
+            </h2>
+            <ul className="space-y-3">
+              {currentPermit.requirements.map((requirement, index) => (
+                <li key={index} className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700">{requirement}</span>
+                </li>
               ))}
-            </div>
-          )}
+            </ul>
+          </Card>
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <div className="flex gap-2">
-          <Button type="submit" loading={loading}>Submit</Button>
-          <Button type="button" variant="ghost" onClick={() => router.push("/dashboard")}>Cancel</Button>
+
+        {/* Application Form */}
+        <div className="lg:col-span-2">
+          <Card className="p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-6">Application Details</h2>
+            
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <Input
+                label="Full Name"
+                value={formData.fullName}
+                onChange={(e) => handleInputChange("fullName", e.target.value)}
+                placeholder="Enter your full name"
+                error={errors.fullName}
+                leftIcon={<User className="h-4 w-4" />}
+                required
+              />
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input
+                  label="Phone Number"
+                  value={formData.phone}
+                  onChange={(e) => handleInputChange("phone", e.target.value)}
+                  placeholder="09xxxxxxxxx"
+                  error={errors.phone}
+                  leftIcon={<Phone className="h-4 w-4" />}
+                  required
+                />
+                <Input
+                  label="Email Address"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => handleInputChange("email", e.target.value)}
+                  placeholder="you@email.com"
+                  error={errors.email}
+                  leftIcon={<Mail className="h-4 w-4" />}
+                  required
+                />
+              </div>
+
+              <FileUpload
+                files={files}
+                onFilesChange={setFiles}
+                maxFiles={5}
+                maxSize={5 * 1024 * 1024} // 5MB
+                accept={["image/*", "application/pdf"]}
+                label="Supporting Documents"
+                helperText="Upload relevant documents (images or PDFs). Max 5 files, 5MB each."
+              />
+
+              <div className="flex gap-4 pt-4">
+                <Button 
+                  type="submit" 
+                  loading={loading}
+                  className="flex-1"
+                >
+                  Submit Application
+                </Button>
+                <Button 
+                  type="button" 
+                  variant="outline"
+                  onClick={() => router.push("/dashboard")}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </Card>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
