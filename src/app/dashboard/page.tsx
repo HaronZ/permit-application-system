@@ -8,8 +8,9 @@ import Input from "@/components/ui/Input";
 import EmptyState from "@/components/ui/EmptyState";
 import Skeleton from "@/components/ui/Skeleton";
 import Button from "@/components/ui/Button";
-import { Search, Plus, Calendar, Hash, Filter } from "lucide-react";
+import { Search, Plus, Calendar, Hash, Filter, Trash2, Edit, Eye } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import toast from "react-hot-toast";
 
 type Application = {
   id: string;
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [stats, setStats] = useState({
     total: 0,
     submitted: 0,
@@ -67,6 +69,30 @@ export default function Dashboard() {
     }
   }
 
+  async function deleteApplication(id: string) {
+    if (!confirm("Are you sure you want to delete this application? This action cannot be undone.")) {
+      return;
+    }
+
+    setDeleting(id);
+    try {
+      const { error } = await supabase
+        .from("applications")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+
+      toast.success("Application deleted successfully");
+      await loadApplications();
+    } catch (error: any) {
+      console.error("Error deleting application:", error);
+      toast.error(error.message || "Failed to delete application");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   const filteredApplications = applications.filter(app => {
     const matchesSearch = 
       app.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -90,49 +116,93 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">My Applications</h1>
-          <p className="text-gray-600 mt-1">Track the status of your permit applications</p>
+          <p className="text-gray-600 mt-2">Track and manage your permit applications</p>
         </div>
-        <Link href="/apply/business">
-          <Button leftIcon={<Plus className="h-4 w-4" />}>
+        <Link href="/apply">
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
             New Application
           </Button>
         </Link>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        {statusOptions.map((option) => (
-          <Card key={option.value} className="p-4 text-center">
-            <div className="text-2xl font-bold text-gray-900">{option.count}</div>
-            <div className="text-sm text-gray-600">{option.label}</div>
-          </Card>
-        ))}
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <Card className="p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-blue-100 text-blue-600">
+              <Hash className="h-6 w-6" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Total Applications</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+            </div>
+          </div>
+        </Card>
+        
+        <Card className="p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-yellow-100 text-yellow-600">
+              <Calendar className="h-6 w-6" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Under Review</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.underReview}</p>
+            </div>
+          </div>
+        </Card>
+        
+        <Card className="p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-green-100 text-green-600">
+              <Hash className="h-6 w-6" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Approved</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.approved}</p>
+            </div>
+          </div>
+        </Card>
+        
+        <Card className="p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-red-100 text-red-600">
+              <Hash className="h-6 w-6" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Rejected</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.rejected}</p>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <Input
-              placeholder="Search by type, ID, or reference..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 w-full sm:w-80"
-            />
+      <Card className="p-6">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Input
+                type="text"
+                placeholder="Search applications by ID, type, or reference..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
           </div>
           
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-gray-400" />
+          <div className="flex gap-2">
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              {statusOptions.map((option) => (
+              {statusOptions.map(option => (
                 <option key={option.value} value={option.value}>
                   {option.label} ({option.count})
                 </option>
@@ -140,78 +210,89 @@ export default function Dashboard() {
             </select>
           </div>
         </div>
-        
-        <div className="text-sm text-gray-500">
-          {filteredApplications.length} of {applications.length} applications
-        </div>
-      </div>
+      </Card>
 
       {/* Applications List */}
       {loading ? (
         <div className="space-y-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i} className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-5 w-48" />
-                  <Skeleton className="h-4 w-64" />
-                </div>
-                <Skeleton className="h-8 w-24" />
-              </div>
-            </Card>
+          {[...Array(5)].map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
           ))}
         </div>
       ) : filteredApplications.length === 0 ? (
         <EmptyState 
-          title={applications.length === 0 ? "No applications yet" : "No matching applications"}
-          description={
-            applications.length === 0 
-              ? "Start your first application to get started."
-              : "Try adjusting your search or filter criteria."
-          }
-          actionHref={applications.length === 0 ? "/apply/business" : undefined}
-          actionText={applications.length === 0 ? "Start Business Permit" : undefined}
+          title="No applications found" 
+          description="Get started by submitting your first permit application." 
+          actionHref="/apply"
+          actionText="Apply Now"
         />
       ) : (
         <div className="space-y-4">
           {filteredApplications.map((app) => (
-            <Link key={app.id} href={`/applications/${app.id}`}>
-              <Card className="p-6 card-hover">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold text-gray-900 capitalize">
-                        {app.type} Permit
-                      </h3>
-                      <StatusBadge status={app.status} size="sm" />
-                    </div>
-                    
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <div className="flex items-center gap-1">
-                        <Hash className="h-4 w-4" />
-                        <span>ID: {app.id.slice(0, 8)}...</span>
-                      </div>
-                      {app.reference_no && (
-                        <div className="flex items-center gap-1">
-                          <span>Ref: {app.reference_no}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        <span>{formatDistanceToNow(new Date(app.created_at), { addSuffix: true })}</span>
-                      </div>
-                    </div>
+            <Card key={app.id} className="p-6 card-hover">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900 capitalize">
+                      {app.type} Permit
+                    </h3>
+                    <StatusBadge status={app.status} size="sm" />
                   </div>
                   
-                  <div className="flex items-center gap-2 text-gray-400">
-                    <span className="text-sm">View Details</span>
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                  <div className="flex items-center gap-4 text-sm text-gray-600">
+                    <div className="flex items-center gap-1">
+                      <Hash className="h-4 w-4" />
+                      <span>ID: {app.id.slice(0, 8)}...</span>
+                    </div>
+                    {app.reference_no && (
+                      <div className="flex items-center gap-1">
+                        <span>Ref: {app.reference_no}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <Calendar className="h-4 w-4" />
+                      <span>{formatDistanceToNow(new Date(app.created_at), { addSuffix: true })}</span>
+                    </div>
                   </div>
                 </div>
-              </Card>
-            </Link>
+                
+                <div className="flex items-center gap-2">
+                  <Link href={`/applications/${app.id}`}>
+                    <Button variant="outline" size="sm">
+                      <Eye className="h-4 w-4 mr-2" />
+                      View
+                    </Button>
+                  </Link>
+                  
+                  {/* Only allow editing/deleting for submitted applications */}
+                  {app.status === "submitted" && (
+                    <>
+                      <Link href={`/apply/${app.type}?edit=${app.id}`}>
+                        <Button variant="outline" size="sm">
+                          <Edit className="h-4 w-4 mr-2" />
+                          Edit
+                        </Button>
+                      </Link>
+                      
+                      <Button
+                        onClick={() => deleteApplication(app.id)}
+                        disabled={deleting === app.id}
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      >
+                        {deleting === app.id ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-2" />
+                        )}
+                        Delete
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </Card>
           ))}
         </div>
       )}

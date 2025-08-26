@@ -2,15 +2,23 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import { useRouter } from "next/navigation";
-import { Building2, Menu, X, User, LogOut, Shield } from "lucide-react";
+import { useRouter, usePathname } from "next/navigation";
+import { Building2, Menu, X, User, LogOut, Shield, Settings } from "lucide-react";
 import UserMenu from "./UserMenu";
+import { checkAdminStatus } from "@/lib/auth";
 
 export default function HeaderNav() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Hide global header on admin routes to avoid duplication
+  if (pathname && pathname.startsWith('/admin')) {
+    return null;
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -19,15 +27,35 @@ export default function HeaderNav() {
       const { data: { user } } = await supabase.auth.getUser();
       if (mounted) {
         setUser(user);
+        if (user) {
+          try {
+            const adminStatus = await checkAdminStatus(user.email);
+            setIsAdmin(adminStatus);
+          } catch (error) {
+            console.error('Error checking admin status:', error);
+            setIsAdmin(false);
+          }
+        }
         setLoading(false);
       }
     }
 
     loadUser();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (mounted) {
         setUser(session?.user ?? null);
+        if (session?.user) {
+          try {
+            const adminStatus = await checkAdminStatus(session.user.email);
+            setIsAdmin(adminStatus);
+          } catch (error) {
+            console.error('Error checking admin status:', error);
+            setIsAdmin(false);
+          }
+        } else {
+          setIsAdmin(false);
+        }
         setLoading(false);
       }
     });
@@ -103,6 +131,15 @@ export default function HeaderNav() {
               >
                 Dashboard
               </Link>
+              {isAdmin && (
+                <Link 
+                  href="/admin" 
+                  className="text-gray-700 hover:text-purple-600 font-medium transition-colors duration-200 flex items-center gap-2"
+                >
+                  <Settings className="h-4 w-4" />
+                  Admin
+                </Link>
+              )}
             </div>
           )}
 
@@ -169,6 +206,18 @@ export default function HeaderNav() {
               >
                 Dashboard
               </Link>
+              {isAdmin && (
+                <Link 
+                  href="/admin" 
+                  className="block px-4 py-3 rounded-xl bg-white/60 backdrop-blur-sm border border-gray-200/50 hover:bg-white/80 transition-all duration-200"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Settings className="h-4 w-4" />
+                    Admin
+                  </div>
+                </Link>
+              )}
             </div>
           </div>
         )}

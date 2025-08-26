@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Store, Building2, ShieldCheck, ArrowRight, CheckCircle, LayoutList, Sparkles, Zap, Users, Award, FileText, Clock, CheckCircle2, Shield } from "lucide-react";
 import Button from "@/components/ui/Button";
+import { checkAdminStatus } from "@/lib/auth";
 
 export default function Home() {
   const router = useRouter();
@@ -19,7 +20,19 @@ export default function Home() {
       if (!data.user) {
         setChecking(false);
       } else {
-        router.replace("/dashboard");
+        // Check if user is admin and redirect accordingly
+        try {
+          const adminStatus = await checkAdminStatus(data.user.email);
+          if (adminStatus) {
+            router.replace("/admin");
+          } else {
+            router.replace("/dashboard");
+          }
+        } catch (error) {
+          console.error('Error checking admin status:', error);
+          // Fallback to dashboard if there's an error
+          router.replace("/dashboard");
+        }
       }
     }
     check();

@@ -15,6 +15,21 @@ const applicationSchema = z.object({
   fullName: z.string().min(2, "Full name must be at least 2 characters"),
   phone: z.string().min(10, "Please enter a valid phone number"),
   email: z.string().email("Please enter a valid email address"),
+  // Business Permit specific fields
+  businessName: z.string().optional(),
+  businessType: z.string().optional(),
+  businessAddress: z.string().optional(),
+  businessRegistration: z.string().optional(),
+  // Building Permit specific fields
+  buildingType: z.string().optional(),
+  buildingAddress: z.string().optional(),
+  landOwnership: z.string().optional(),
+  structuralCalculations: z.string().optional(),
+  siteDevelopmentPlan: z.string().optional(),
+  // Barangay Clearance specific fields
+  purposeOfClearance: z.string().optional(),
+  residencyAddress: z.string().optional(),
+  communityTaxNumber: z.string().optional(),
 });
 
 type ApplicationForm = z.infer<typeof applicationSchema>;
@@ -27,6 +42,18 @@ export default function ApplyPage() {
     fullName: "",
     phone: "",
     email: "",
+    businessName: "",
+    businessType: "",
+    businessAddress: "",
+    businessRegistration: "",
+    buildingType: "",
+    buildingAddress: "",
+    landOwnership: "",
+    structuralCalculations: "",
+    siteDevelopmentPlan: "",
+    purposeOfClearance: "",
+    residencyAddress: "",
+    communityTaxNumber: "",
   });
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
@@ -204,7 +231,7 @@ export default function ApplyPage() {
   }
 
   if (!currentPermit) {
-    return (
+  return (
       <div className="text-center py-12">
         <h1 className="text-2xl font-bold text-gray-900 mb-4">Invalid Permit Type</h1>
         <p className="text-gray-600 mb-6">The permit type you're looking for doesn't exist.</p>
@@ -230,7 +257,7 @@ export default function ApplyPage() {
           </h1>
           <p className="text-gray-600 mt-1">{currentPermit.description}</p>
         </div>
-      </div>
+          </div>
 
       <div className="grid gap-8 lg:grid-cols-3">
         {/* Requirements */}
@@ -289,6 +316,109 @@ export default function ApplyPage() {
                 />
               </div>
 
+              {/* Dynamic Fields Based on Permit Type */}
+              {type === "business" && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 border-b pb-2">Business Information</h3>
+                  <Input
+                    label="Business Name"
+                    value={formData.businessName || ""}
+                    onChange={(e) => handleInputChange("businessName", e.target.value)}
+                    placeholder="Enter your business name"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Business Type"
+                    value={formData.businessType || ""}
+                    onChange={(e) => handleInputChange("businessType", e.target.value)}
+                    placeholder="e.g., Retail, Service, Manufacturing"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Business Address"
+                    value={formData.businessAddress || ""}
+                    onChange={(e) => handleInputChange("businessAddress", e.target.value)}
+                    placeholder="Complete business address"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Business Registration Number"
+                    value={formData.businessRegistration || ""}
+                    onChange={(e) => handleInputChange("businessRegistration", e.target.value)}
+                    placeholder="DTI/SEC registration number"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                </div>
+              )}
+
+              {type === "building" && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 border-b pb-2">Building Information</h3>
+                  <Input
+                    label="Building Type"
+                    value={formData.buildingType || ""}
+                    onChange={(e) => handleInputChange("buildingType", e.target.value)}
+                    placeholder="e.g., Residential, Commercial, Industrial"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Building Address"
+                    value={formData.buildingAddress || ""}
+                    onChange={(e) => handleInputChange("buildingAddress", e.target.value)}
+                    placeholder="Complete building address"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Land Ownership"
+                    value={formData.landOwnership || ""}
+                    onChange={(e) => handleInputChange("landOwnership", e.target.value)}
+                    placeholder="e.g., Owned, Leased, Rented"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Structural Calculations"
+                    value={formData.structuralCalculations || ""}
+                    onChange={(e) => handleInputChange("structuralCalculations", e.target.value)}
+                    placeholder="Engineer's structural calculations details"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Site Development Plan"
+                    value={formData.siteDevelopmentPlan || ""}
+                    onChange={(e) => handleInputChange("siteDevelopmentPlan", e.target.value)}
+                    placeholder="Site development plan details"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                </div>
+              )}
+
+              {type === "barangay" && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 border-b pb-2">Clearance Information</h3>
+                  <Input
+                    label="Purpose of Clearance"
+                    value={formData.purposeOfClearance || ""}
+                    onChange={(e) => handleInputChange("purposeOfClearance", e.target.value)}
+                    placeholder="e.g., Employment, Business, Travel, etc."
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Residency Address"
+                    value={formData.residencyAddress || ""}
+                    onChange={(e) => handleInputChange("residencyAddress", e.target.value)}
+                    placeholder="Complete residency address"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+                  <Input
+                    label="Community Tax Number"
+                    value={formData.communityTaxNumber || ""}
+                    onChange={(e) => handleInputChange("communityTaxNumber", e.target.value)}
+                    placeholder="Community tax certificate number"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                  />
+            </div>
+          )}
+
               <FileUpload
                 files={files}
                 onFilesChange={setFiles}
@@ -318,7 +448,7 @@ export default function ApplyPage() {
             </form>
           </Card>
         </div>
-      </div>
+        </div>
     </div>
   );
 }

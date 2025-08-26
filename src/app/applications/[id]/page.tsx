@@ -51,9 +51,29 @@ export default function ApplicationDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ application_id: app.id, amount: app.fee_amount || 100, email: undefined }),
       });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData.message || `Payment failed (${res.status})`;
+        throw new Error(errorMessage);
+      }
+
       const json = await res.json();
+      
+      if (!json.success) {
+        throw new Error(json.message || "Payment failed");
+      }
+
       const url = json?.invoice?.invoice_url || json?.invoice?.checkout_url;
-      if (url) window.location.href = url;
+      if (url) {
+        window.location.href = url;
+      } else {
+        throw new Error("No payment URL received");
+      }
+    } catch (err: any) {
+      console.error("Payment error:", err);
+      // Show user-friendly error message
+      alert(`Payment Error: ${err.message || "Failed to start payment. Please try again."}`);
     } finally {
       setPaying(false);
     }

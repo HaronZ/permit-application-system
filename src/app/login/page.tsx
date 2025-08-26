@@ -8,6 +8,7 @@ import Card from "@/components/ui/Card";
 import { Chrome, Facebook, Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import toast from "react-hot-toast";
 import { validatePassword } from "@/lib/security";
+import { checkAdminStatus } from "@/lib/auth";
 
 function LoginPageContent() {
   const router = useRouter();
@@ -62,6 +63,22 @@ function LoginPageContent() {
         }
         // Reset attempts on successful login
         setAttempts(0);
+        
+        // Check if user is admin and redirect accordingly
+        try {
+          const adminStatus = await checkAdminStatus(email);
+          if (adminStatus) {
+            router.push("/admin");
+          } else {
+            const next = searchParams.get("next");
+            router.push(next || "/dashboard");
+          }
+        } catch (error) {
+          console.error('Error checking admin status:', error);
+          // Fallback to default redirect
+          const next = searchParams.get("next");
+          router.push(next || "/dashboard");
+        }
       } else {
         const { error } = await supabase.auth.signUp({
           email,
@@ -71,8 +88,6 @@ function LoginPageContent() {
         if (error) throw error;
         toast.success("Check your email to verify your account.");
       }
-      const next = searchParams.get("next");
-      router.push(next || "/");
     } catch (err: any) {
       const msg = err?.message || "Authentication failed";
       setError(msg);

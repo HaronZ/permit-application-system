@@ -1,18 +1,18 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 import StatusBadge from "@/components/StatusBadge";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import EmptyState from "@/components/ui/EmptyState";
-import { isAdmin } from "@/lib/auth";
 import Skeleton from "@/components/ui/Skeleton";
 import Button from "@/components/ui/Button";
-import { Search, Filter, Download, Eye, CheckCircle, Clock, AlertCircle, XCircle, Package, BarChart3 } from "lucide-react";
+import { Search, Filter, Download, Eye, CheckCircle, Clock, AlertCircle, XCircle, Package, BarChart3, Users, Settings, Shield, Bell, Wifi, WifiOff } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
 import MonitoringDashboard from "@/components/MonitoringDashboard";
+import { checkAdminStatus, checkSuperAdminStatus, getUserPermissionsAsync, UserRole } from "@/lib/auth";
 
 type Application = {
   id: string;
@@ -34,15 +34,19 @@ type Application = {
 
 export default function Admin() {
   const [applications, setApplications] = useState<Application[]>([]);
-  const [updating, setUpdating] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [email, setEmail] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState<number>(0);
+  const [pageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [updating, setUpdating] = useState<string | null>(null);
   const [stats, setStats] = useState({
     total: 0,
     submitted: 0,
@@ -51,70 +55,176 @@ export default function Admin() {
     readyForPickup: 0,
     rejected: 0,
   });
-  const [showMonitoring, setShowMonitoring] = useState(false);
+  
+  // Real-time state
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [newApplicationsCount, setNewApplicationsCount] = useState(0);
+  
+  // Refs for cleanup
+  const realtimeSubscription = useRef<any>(null);
+  const autoRefreshInterval = useRef<NodeJS.Timeout | null>(null);
+  const mounted = useRef(true);
 
-  const pageSize = 10;
-
-  // Helper function to safely get applicant data
-  const getApplicantData = (app: Application) => {
-    if (!app.applicant) return null;
-    if (Array.isArray(app.applicant)) {
-      return app.applicant[0] || null;
+  // Request notification permission
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
     }
-    return app.applicant;
-  };
+  }, []);
+
+  // Show notification for new applications
+  const showNotification = useCallback((title: string, body: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body, icon: '/favicon.ico' });
+    }
+    
+    // Also show toast notification
+    toast.success(body, {
+      duration: 5000,
+      icon: '🔔',
+    });
+  }, []);
+
+  // Setup real-time subscription
+  const setupRealtimeSubscription = useCallback(() => {
+    if (!mounted.current) return;
+
+    // Subscribe to applications table changes
+    realtimeSubscription.current = supabase
+      .channel('applications_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'applications'
+        },
+        async (payload) => {
+          if (!mounted.current) return;
+          
+          console.log('Real-time update received:', payload);
+          setLastUpdate(new Date());
+          
+          // Handle different types of changes
+          if (payload.eventType === 'INSERT') {
+            // New application submitted
+            setNewApplicationsCount(prev => prev + 1);
+            showNotification(
+              'New Permit Application',
+              `A new ${payload.new.type} application has been submitted!`
+            );
+            
+            // Refresh data immediately
+            await loadApplications();
+          } else if (payload.eventType === 'UPDATE') {
+            // Application status changed
+            if (payload.old.status !== payload.new.status) {
+              showNotification(
+                'Application Status Updated',
+                `Application ${payload.new.reference_no || payload.new.id} status changed to ${payload.new.status}`
+              );
+            }
+            
+            // Refresh data
+            await loadApplications();
+          } else if (payload.eventType === 'DELETE') {
+            // Application deleted
+            showNotification(
+              'Application Deleted',
+              'An application has been removed from the system'
+            );
+            
+            // Refresh data
+            await loadApplications();
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (mounted.current) {
+          setIsRealtimeConnected(status === 'SUBSCRIBED');
+          console.log('Realtime subscription status:', status);
+        }
+      });
+
+    return realtimeSubscription.current;
+  }, [showNotification]);
+
+  // Setup auto-refresh
+  const setupAutoRefresh = useCallback(() => {
+    if (!autoRefreshEnabled || !mounted.current) return;
+    
+    autoRefreshInterval.current = setInterval(async () => {
+      if (mounted.current && !loading) {
+        console.log('Auto-refreshing admin dashboard...');
+        await loadApplications();
+        setLastUpdate(new Date());
+      }
+    }, 30000); // Refresh every 30 seconds
+  }, [autoRefreshEnabled, loading]);
+
+  // Cleanup real-time and auto-refresh
+  const cleanupRealtime = useCallback(() => {
+    if (realtimeSubscription.current) {
+      supabase.removeChannel(realtimeSubscription.current);
+      realtimeSubscription.current = null;
+    }
+    
+    if (autoRefreshInterval.current) {
+      clearInterval(autoRefreshInterval.current);
+      autoRefreshInterval.current = null;
+    }
+  }, []);
 
   async function loadApplications(nextPage = page, nextQuery = searchQuery, nextFilter = statusFilter) {
     setLoading(true);
     try {
-      const from = (nextPage - 1) * pageSize;
-      const to = from + pageSize - 1;
-
       let query = supabase
         .from("applications")
         .select(`
           id, type, status, created_at, applicant_id, reference_no,
           applicant:applicants(full_name, email, phone)
-        `, { count: "exact" })
+        `)
         .order("created_at", { ascending: false });
 
       if (nextFilter !== "all") {
         query = query.eq("status", nextFilter);
       }
 
-      if (nextQuery.trim()) {
-        const term = nextQuery.trim();
-        query = query.or(`type.ilike.%${term}%,id.ilike.%${term}%,reference_no.ilike.%${term}%`);
+      if (nextQuery) {
+        query = query.or(`id.ilike.%${nextQuery}%,type.ilike.%${nextQuery}%,reference_no.ilike.%${nextQuery}%`);
       }
 
-      const { data, count, error } = await query.range(from, to);
+      const { data, error, count } = await query
+        .range((nextPage - 1) * pageSize, nextPage * pageSize - 1)
+        .select("*");
 
       if (error) throw error;
 
       setApplications(data || []);
       setTotalCount(count || 0);
+      setPage(nextPage);
 
-      // Calculate stats for current filter
-      if (nextFilter === "all") {
-        const statsQuery = supabase
-          .from("applications")
-          .select("status");
-        
-        const { data: allApps } = await statsQuery;
-        const allApplications = allApps || [];
-        
-        setStats({
-          total: allApplications.length,
-          submitted: allApplications.filter(a => a.status === "submitted").length,
-          underReview: allApplications.filter(a => a.status === "under_review").length,
-          approved: allApplications.filter(a => a.status === "approved").length,
-          readyForPickup: allApplications.filter(a => a.status === "ready_for_pickup").length,
-          rejected: allApplications.filter(a => a.status === "rejected").length,
-        });
+      // Calculate stats
+      const allApps = await supabase
+        .from("applications")
+        .select("status");
+
+      if (allApps.data) {
+        const stats = {
+          total: allApps.data.length,
+          submitted: allApps.data.filter(a => a.status === "submitted").length,
+          underReview: allApps.data.filter(a => a.status === "under_review").length,
+          approved: allApps.data.filter(a => a.status === "approved").length,
+          readyForPickup: allApps.data.filter(a => a.status === "ready_for_pickup").length,
+          rejected: allApps.data.filter(a => a.status === "rejected").length,
+        };
+        setStats(stats);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error loading applications:", error);
-      toast.error("Failed to load applications");
+      toast.error(error.message || "Failed to load applications");
     } finally {
       setLoading(false);
     }
@@ -124,23 +234,73 @@ export default function Admin() {
     let mounted = true;
     async function init() {
       setAuthLoading(true);
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
-      setEmail(data.user?.email ?? null);
-      setAuthLoading(false);
-      if (data.user?.email && isAdmin(data.user.email)) {
-        loadApplications();
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!mounted) return;
+        
+        const userEmail = data.user?.email ?? null;
+        setEmail(userEmail);
+        
+        if (userEmail) {
+          // Check admin status using new RBAC system
+          const adminStatus = await checkAdminStatus(userEmail);
+          const superAdminStatus = await checkSuperAdminStatus(userEmail);
+          const userPermissions = await getUserPermissionsAsync(userEmail);
+          
+          if (mounted) {
+            setIsAdmin(adminStatus);
+            setIsSuperAdmin(superAdminStatus);
+            setUserRole(userPermissions?.role || null);
+            
+            if (adminStatus) {
+              await loadApplications();
+              
+              // Setup real-time and auto-refresh after initial load
+              setupRealtimeSubscription();
+              setupAutoRefresh();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing admin:', error);
+      } finally {
+        if (mounted) {
+          setAuthLoading(false);
+        }
       }
     }
+    
     init();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user?.email ?? null);
-      if (session?.user?.email && isAdmin(session.user.email)) {
-        loadApplications();
+    
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, session) => {
+      const userEmail = session?.user?.email ?? null;
+      setEmail(userEmail);
+      
+      if (userEmail) {
+        const adminStatus = await checkAdminStatus(userEmail);
+        const superAdminStatus = await checkSuperAdminStatus(userEmail);
+        const userPermissions = await getUserPermissionsAsync(userEmail);
+        
+        setIsAdmin(adminStatus);
+        setIsSuperAdmin(superAdminStatus);
+        setUserRole(userPermissions?.role || null);
+        
+        if (adminStatus) {
+          await loadApplications();
+          
+          // Setup real-time and auto-refresh
+          setupRealtimeSubscription();
+          setupAutoRefresh();
+        }
       }
     });
-    return () => { mounted = false; sub.subscription.unsubscribe(); };
-  }, []);
+    
+    return () => { 
+      mounted = false; 
+      sub.subscription.unsubscribe();
+      cleanupRealtime();
+    };
+  }, [setupRealtimeSubscription, setupAutoRefresh, cleanupRealtime]);
 
   async function setStatus(id: string, status: string) {
     setUpdating(id);
@@ -268,7 +428,7 @@ export default function Admin() {
     );
   }
 
-  if (!isAdmin(email)) {
+  if (!isAdmin) {
     return (
       <EmptyState 
         title="Not authorized" 
